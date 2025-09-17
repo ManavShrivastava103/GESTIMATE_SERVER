@@ -1,0 +1,24 @@
+# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Environment variables
+.env
+
+# Build output (React)
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db

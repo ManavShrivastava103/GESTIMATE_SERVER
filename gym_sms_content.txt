@@ -1,0 +1,303 @@
+==== C:\Users\Dell\gym_sms\models\Alert.js ====
+import mongoose from "mongoose";
+
+const alertSchema = new mongoose.Schema({
+  message: { type: String, required: true },
+  level: { type: String, enum: ["info", "warning", "critical"], default: "info" },
+  timestamp: { type: Date, default: Date.now }
+});
+
+export default mongoose.model("Alert", alertSchema);
+==== C:\Users\Dell\gym_sms\models\DeviceConfig.js ====
+import mongoose from "mongoose";
+
+const deviceConfigSchema = new mongoose.Schema({
+  deviceId: { type: String, required: true, unique: true },
+  ssid: { type: String, required: true },
+  password: { type: String, required: true },
+  updatedAt: { type: Date, default: Date.now },
+  max_extension: { type: Number, default: 0, min: 0 },
+  light_colour_1: { type: Number, default: 0, min: 0, max: 255 },
+  light_colour_2: { type: Number, default: 0, min: 0, max: 255 },
+  light_colour_3: { type: Number, default: 0, min: 0, max: 255 },
+  light_pattern: { type: String, default: "static" },
+  min_acceleration: { type: Number, default: 0.0 },
+  max_acceleration: { type: Number, default: 0.0 },
+  current_user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  machine_name: { type: String, default: "" },
+});
+
+deviceConfigSchema.pre("save", function (next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+export default mongoose.model("DeviceConfig", deviceConfigSchema);
+==== C:\Users\Dell\gym_sms\models\Gym.js ====
+import mongoose from "mongoose";
+
+const gymSchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+  location: { type: String, required: true },
+  machines: { type: [String], required: true, validate: v => v.length > 0 },
+  users: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  deviceConfigs: [{ type: mongoose.Schema.Types.ObjectId, ref: "DeviceConfig" }]
+});
+
+export default mongoose.model("Gym", gymSchema);
+==== C:\Users\Dell\gym_sms\models\Session.js ====
+import mongoose from "mongoose";
+
+const sessionSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  deviceId: { type: String, required: true }, // updated from string machine
+  reps: { type: Number, min: 0, default: 0 },
+  brisk_reps: { type: Number, min: 0, default: 0 },
+  quality: { type: String, enum: ["good", "average", "bad"], default: "good" },
+  timestamp: { type: Date, default: Date.now }
+});
+
+export default mongoose.model("Session", sessionSchema);
+==== C:\Users\Dell\gym_sms\models\User.js ====
+import mongoose from "mongoose";
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { type: String, enum: ['user', 'trainer', 'admin'], default: 'user' },
+  age: Number,
+  email: { type: String, match: /\S+@\S+\.\S+/ },
+  membership: String,
+  performanceScore: { type: Number, default: 0 }
+});
+
+export default mongoose.model("User", userSchema);
+==== C:\Users\Dell\gym_sms\routes\alerts.js ====
+import express from "express";
+import Alert from "../models/Alert.js";
+
+const router = express.Router();
+
+router.get("/", async (req, res) => {
+  const alerts = await Alert.find();
+  res.json(alerts);
+});
+
+export default router;
+==== C:\Users\Dell\gym_sms\routes\auth.js ====
+import express from "express";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import User from "../models/User.js";
+
+const router = express.Router();
+
+// Login
+router.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await User.findOne({ username });
+    if (!user) return res.status(400).json({ msg: "User not found" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ msg: "Invalid credentials" });
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
+    res.json({ user, token });
+  } catch (err) {
+    res.status(500).send("Server error");
+  }
+});
+
+export default router;
+==== C:\Users\Dell\gym_sms\routes\deviceconfigs.js ====
+import express from "express";
+import DeviceConfig from "../models/DeviceConfig.js";
+import Session from "../models/Session.js";
+
+const router = express.Router();
+
+// GET device config by deviceId
+router.get("/:deviceId", async (req, res) => {
+  try {
+    const config = await DeviceConfig.findOne({ deviceId: req.params.deviceId })
+      .populate("current_user")
+      .lean();
+    if (!config) return res.status(404).json({ msg: "Device not found" });
+    res.json(config);
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// POST add/update device config
+router.post("/", async (req, res) => {
+  try {
+    const { deviceId, ssid, password, max_extension, light_colour_1, light_colour_2, light_colour_3, light_pattern, min_acceleration, max_acceleration, current_user, machine_name } = req.body;
+    if (!deviceId || !ssid || !password) return res.status(400).json({ msg: "Missing required fields" });
+
+    const updateFields = { ssid, password, max_extension, light_colour_1, light_colour_2, light_colour_3, light_pattern, min_acceleration, max_acceleration, current_user, machine_name, updatedAt: Date.now() };
+    const updatedConfig = await DeviceConfig.findOneAndUpdate({ deviceId }, updateFields, { new: true, upsert: true });
+    res.json({ msg: "Device configuration saved successfully", config: updatedConfig });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// POST end session for a device
+router.post("/:deviceId/end-session", async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const sessions = await Session.find({ deviceId });
+    if (!sessions.length) return res.status(404).json({ msg: "No sessions found for this device" });
+
+    // Here you can implement logic to mark session as ended or remove temporary session data
+    await Session.updateMany({ deviceId }, { $set: { ended: true } }); // optional "ended" field
+    res.json({ msg: "All sessions for device ended" });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+export default router;
+==== C:\Users\Dell\gym_sms\routes\gyms.js ====
+import express from "express";
+import Gym from "../models/Gym.js";
+
+const router = express.Router();
+
+// GET all gyms (optional search by name)
+router.get("/", async (req, res) => {
+  try {
+    const { name } = req.query;
+    const gyms = await Gym.find(name ? { name: new RegExp(name, "i") } : {}).populate("users deviceConfigs");
+    res.json(gyms);
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// GET gym by id
+router.get("/:id", async (req, res) => {
+  try {
+    const gym = await Gym.findById(req.params.id).populate("users deviceConfigs");
+    if (!gym) return res.status(404).json({ msg: "Gym not found" });
+    res.json(gym);
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// POST create new gym
+router.post("/", async (req, res) => {
+  try {
+    const { name, location, machines, users, deviceConfigs } = req.body;
+    if (!name || !location || !machines) return res.status(400).json({ msg: "Missing required fields" });
+
+    const existingGym = await Gym.findOne({ name });
+    if (existingGym) return res.status(400).json({ msg: "Gym with this name already exists" });
+
+    const newGym = new Gym({ name, location, machines, users, deviceConfigs });
+    const savedGym = await newGym.save();
+    res.status(201).json({ msg: "Gym created successfully", gym: savedGym });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// PUT update gym
+router.put("/:id", async (req, res) => {
+  try {
+    const updatedGym = await Gym.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!updatedGym) return res.status(404).json({ msg: "Gym not found" });
+    res.json({ msg: "Gym updated successfully", gym: updatedGym });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// DELETE gym
+router.delete("/:id", async (req, res) => {
+  try {
+    const deletedGym = await Gym.findByIdAndDelete(req.params.id);
+    if (!deletedGym) return res.status(404).json({ msg: "Gym not found" });
+    res.json({ msg: "Gym deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+export default router;
+==== C:\Users\Dell\gym_sms\routes\sessions.js ====
+import express from "express";
+import Session from "../models/Session.js";
+
+const router = express.Router();
+
+// Get all sessions
+router.get("/", async (req, res) => {
+  try {
+    const sessions = await Session.find().populate("user", "username email").lean();
+    res.json(sessions);
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// Get sessions of a specific user
+router.get("/user/:userId", async (req, res) => {
+  try {
+    const sessions = await Session.find({ user: req.params.userId }).lean();
+    res.json(sessions);
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// Log new session
+router.post("/", async (req, res) => {
+  try {
+    const { user, deviceId, reps = 0, brisk_reps = 0, quality = "good" } = req.body;
+    if (!user || !deviceId) return res.status(400).json({ msg: "Missing user or deviceId" });
+
+    const newSession = new Session({ user, deviceId, reps, brisk_reps, quality });
+    await newSession.save();
+
+    res.status(201).json({ msg: "Session logged successfully", session: newSession });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+export default router;
+==== C:\Users\Dell\gym_sms\routes\users.js ====
+import express from "express";
+import User from "../models/User.js";
+import Session from "../models/Session.js";
+
+const router = express.Router();
+
+// Get all users
+router.get("/", async (req, res) => {
+  try {
+    const users = await User.find();
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+// Get single user with sessions
+router.get("/:id", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ msg: "User not found" });
+
+    const sessions = await Session.find({ user: user._id }).lean();
+    res.json({ ...user.toObject(), sessions });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error", error: err.message });
+  }
+});
+
+export default router;

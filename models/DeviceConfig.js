@@ -12,7 +12,7 @@ const deviceConfigSchema = new mongoose.Schema({
   light_pattern: { type: String, default: "static" },
   min_acceleration: { type: Number, default: 0.0 },
   max_acceleration: { type: Number, default: 0.0 },
-  current_user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  current_user: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   machine_name: { type: String, default: "" },
 });
 
